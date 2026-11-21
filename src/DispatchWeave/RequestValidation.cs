@@ -11,7 +11,7 @@ public static class RequestValidation
         List<ValidationFailure> failures = [];
         foreach (var validator in validators)
         {
-            var result = await validator.ValidateAsync(request, cancellationToken).ConfigureAwait(false);
+            var result = await validator.ValidateAsync(new ValidationContext<T>(request), cancellationToken).ConfigureAwait(false);
             failures.AddRange(result.Errors);
         }
         return failures;

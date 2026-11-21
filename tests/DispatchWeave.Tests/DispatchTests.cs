@@ -30,6 +30,30 @@ public class DispatchTests
     }
 
     [Fact]
+    public async Task Registry_resolves_a_fresh_handler_from_the_factory_for_each_call()
+    {
+        var handlers = new Registration.HandlerRegistry();
+        var count = 0;
+        handlers.Register<Echo, Result<string>>(() =>
+        {
+            count++;
+            return new EchoHandler();
+        });
+        var dispatcher = new Dispatcher(new Registration.RegistryRoutes(handlers, new(), new()));
+        await dispatcher.Send(new Echo("first"));
+        await dispatcher.Send(new Echo("second"));
+        Assert.Equal(2, count);
+    }
+
+    [Fact]
+    public async Task Missing_handler_exposes_a_stable_error_code()
+    {
+        var dispatcher = new Dispatcher(new Registration.RegistryRoutes(new(), new(), new()));
+        var failure = await Assert.ThrowsAsync<HandlerResolutionException>(() => dispatcher.Send(new Echo("missing")));
+        Assert.Equal("Handler.NotFound", failure.Code);
+    }
+
+    [Fact]
     public async Task Dispatches_closed_requests_and_returns_structured_validation_errors()
     {
         var services = new ServiceCollection();

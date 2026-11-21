@@ -20,3 +20,7 @@ public sealed class GetNameHandler : IQueryHandler<GetName, string>
 ```
 
 Register FluentValidation validators as `IValidator<TRequest>`. Validation runs before the handler and returns FluentResults errors with property names and error codes. Custom response types can define their own validation behavior.
+
+### Explicit registration
+
+For standalone dispatch, register a typed handler factory with `DispatchWeave.Registration.HandlerRegistry.Register<TRequest, TResponse>`. Pass the handler, pipeline and notification registries to `RegistryRoutes`, then construct a `Dispatcher` with those routes. Factories run per dispatch. An optional `INotificationPublisher` controls execution and error handling for subscribers.

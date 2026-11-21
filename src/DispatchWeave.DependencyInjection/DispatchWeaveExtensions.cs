@@ -44,7 +44,8 @@ internal sealed class ServiceProviderRoutes(IServiceProvider provider) : IDispat
 {
     public RequestHandlerDelegate<TResponse> Handler<TRequest, TResponse>(TRequest request, CancellationToken token)
         where TRequest : IRequest<TResponse> =>
-        () => provider.GetRequiredService<IRequestHandler<TRequest, TResponse>>().Handle(request, token);
+        () => (provider.GetService<IRequestHandler<TRequest, TResponse>>() ??
+            throw HandlerResolutionException.Missing(typeof(TRequest))).Handle(request, token);
 
     public IEnumerable<IPipelineBehavior<TRequest, TResponse>> Behaviors<TRequest, TResponse>()
         where TRequest : IRequest<TResponse> => provider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
