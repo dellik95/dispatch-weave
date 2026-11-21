@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../DispatchWeave/DispatchWeave.csproj" />
+    <PackageReference Include="Autofac" Version="8.2.0" />
+  </ItemGroup>
+</Project>

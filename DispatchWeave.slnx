@@ -3,6 +3,8 @@
     <Project Path="src/DispatchWeave.Abstractions/DispatchWeave.Abstractions.csproj" />
     <Project Path="src/DispatchWeave/DispatchWeave.csproj" />
     <Project Path="src/DispatchWeave.DependencyInjection/DispatchWeave.DependencyInjection.csproj" />
+    <Project Path="src/DispatchWeave.Autofac/DispatchWeave.Autofac.csproj" />
+    <Project Path="src/DispatchWeave.SimpleInjector/DispatchWeave.SimpleInjector.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/DispatchWeave.Tests/DispatchWeave.Tests.csproj" />

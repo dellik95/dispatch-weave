@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../DispatchWeave/DispatchWeave.csproj" />
+    <PackageReference Include="SimpleInjector" Version="5.5.0" />
+  </ItemGroup>
+</Project>

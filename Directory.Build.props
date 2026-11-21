@@ -1,14 +1,21 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;NU1510</NoWarn>
     <Authors>dellik95</Authors>
     <RepositoryUrl>https://github.com/dellik95/dispatch-weave</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <Description>Scoped request dispatch, ordered pipelines and notification publishing for .NET.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>mediator;cqrs;dispatch;pipeline;notifications;streaming;dependency-injection;dotnet</PackageTags>
+    <Description>Production-grade CQRS request/stream dispatch, ordered extensible pipelines, resilience behaviors, and polymorphic notification publishing for .NET 11.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Version>1.2.0</Version>
+    <Version>2.0.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" />

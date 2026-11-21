@@ -1,5 +1,3 @@
-using System.Reflection;
-using DispatchWeave.Results;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -7,49 +5,83 @@ namespace DispatchWeave;
 
 public static class DispatchWeaveExtensions
 {
-    public static IServiceCollection AddDispatchWeave(this IServiceCollection services, Action<DispatchWeaveBuilder> configure)
+    public static IServiceCollection AddDispatchWeave(
+        this IServiceCollection services,
+        Action<DispatchWeaveBuilder>? configure = null)
     {
-        services.TryAddScoped<IDispatchRoutes, ServiceProviderRoutes>();
-        services.TryAddScoped<IDispatcher, Dispatcher>();
-        configure(new DispatchWeaveBuilder(services));
+        ArgumentNullException.ThrowIfNull(services);
+
+        var existingOptions = services
+            .FirstOrDefault(static d => d.ServiceType == typeof(DispatchWeaveOptions))
+            ?.ImplementationInstance as DispatchWeaveOptions;
+
+        var options = existingOptions ?? new DispatchWeaveOptions();
+        var registrar = new ServiceCollectionRegistrar(services);
+        var builder = new DispatchWeaveBuilder(registrar, options);
+        configure?.Invoke(builder);
+
+        var lifetime = ServiceCollectionRegistrar.MapLifetime(builder.DefaultLifetime);
+        services.TryAdd(ServiceDescriptor.Describe(typeof(IDispatchRoutes), typeof(ServiceProviderRoutes), lifetime));
+        services.TryAdd(ServiceDescriptor.Describe(typeof(IDispatcher), typeof(Dispatcher), lifetime));
+        services.TryAdd(ServiceDescriptor.Describe(
+            typeof(ISender),
+            static sp => sp.GetRequiredService<IDispatcher>(),
+            lifetime));
+        services.TryAdd(ServiceDescriptor.Describe(
+            typeof(IPublisher),
+            static sp => sp.GetRequiredService<IDispatcher>(),
+            lifetime));
+
         return services;
     }
 }
 
-public sealed class DispatchWeaveBuilder(IServiceCollection services)
+/// <summary>
+/// <see cref="IDispatchRegistrar"/> adapter for <see cref="IServiceCollection"/> (Microsoft.Extensions.DependencyInjection).
+/// </summary>
+public sealed class ServiceCollectionRegistrar(IServiceCollection services) : IDispatchRegistrar
 {
-    public DispatchWeaveBuilder RegisterHandlers(params Assembly[] assemblies)
+    public IServiceCollection Services { get; } = services ?? throw new ArgumentNullException(nameof(services));
+
+    public void RegisterInstance<TService>(TService instance) where TService : class
     {
-        foreach (var implementation in assemblies.Distinct().SelectMany(a => a.DefinedTypes)
-                     .Where(t => t.IsClass && !t.IsAbstract && !t.ContainsGenericParameters))
-        foreach (var contract in implementation.ImplementedInterfaces.Where(i => i.IsGenericType))
+        ArgumentNullException.ThrowIfNull(instance);
+        Services.Replace(ServiceDescriptor.Singleton(typeof(TService), instance));
+    }
+
+    public void Register(
+        Type serviceType,
+        Type implementationType,
+        DispatchServiceLifetime lifetime = DispatchServiceLifetime.Scoped,
+        bool replace = false)
+    {
+        var descriptor = ServiceDescriptor.Describe(serviceType, implementationType, MapLifetime(lifetime));
+        if (replace)
+            Services.Replace(descriptor);
+        else
+            Services.TryAddEnumerable(descriptor);
+    }
+
+    public void RegisterCollection(
+        Type serviceType,
+        Type implementationType,
+        DispatchServiceLifetime lifetime = DispatchServiceLifetime.Scoped)
+    {
+        Services.TryAddEnumerable(ServiceDescriptor.Describe(serviceType, implementationType, MapLifetime(lifetime)));
+    }
+
+    public void RegisterCollectionInstance(Type serviceType, object instance)
+    {
+        ArgumentNullException.ThrowIfNull(serviceType);
+        ArgumentNullException.ThrowIfNull(instance);
+        Services.TryAddEnumerable(ServiceDescriptor.Singleton(serviceType, instance));
+    }
+
+    internal static ServiceLifetime MapLifetime(DispatchServiceLifetime lifetime) =>
+        lifetime switch
         {
-            var definition = contract.GetGenericTypeDefinition();
-            if (definition == typeof(IRequestHandler<,>) || definition == typeof(INotificationHandler<>))
-                services.TryAddEnumerable(ServiceDescriptor.Scoped(contract, implementation));
-        }
-        return this;
-    }
-
-    public DispatchWeaveBuilder AddBehavior(Type openBehavior)
-    {
-        services.TryAddEnumerable(ServiceDescriptor.Scoped(typeof(IPipelineBehavior<,>), openBehavior));
-        return this;
-    }
-
-    public DispatchWeaveBuilder WithValidation() => AddBehavior(typeof(ValidationBehavior<,>));
-}
-
-internal sealed class ServiceProviderRoutes(IServiceProvider provider) : IDispatchRoutes
-{
-    public RequestHandlerDelegate<TResponse> Handler<TRequest, TResponse>(TRequest request, CancellationToken token)
-        where TRequest : IRequest<TResponse> =>
-        () => (provider.GetService<IRequestHandler<TRequest, TResponse>>() ??
-            throw HandlerResolutionException.Missing(typeof(TRequest))).Handle(request, token);
-
-    public IEnumerable<IPipelineBehavior<TRequest, TResponse>> Behaviors<TRequest, TResponse>()
-        where TRequest : IRequest<TResponse> => provider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
-
-    public IEnumerable<INotificationHandler<TNotification>> Notifications<TNotification>() where TNotification : INotification =>
-        provider.GetServices<INotificationHandler<TNotification>>();
+            DispatchServiceLifetime.Transient => ServiceLifetime.Transient,
+            DispatchServiceLifetime.Singleton => ServiceLifetime.Singleton,
+            _ => ServiceLifetime.Scoped
+        };
 }

@@ -1,74 +1,282 @@
 using System.Collections.Concurrent;
+using DispatchWeave.Registration;
 
 namespace DispatchWeave;
 
-public sealed class Dispatcher(IDispatchRoutes routes, INotificationPublisher? publisher = null) : IDispatcher
+/// <summary>
+/// Default production implementation of <see cref="IDispatcher"/> supporting requests, streams, and polymorphic notifications.
+/// </summary>
+public sealed class Dispatcher : IDispatcher
 {
+    private readonly IDispatchRoutes routes;
+    private readonly INotificationPublisher publisher;
+    private readonly DispatchWeaveOptions options;
+
+    public Dispatcher(
+        IDispatchRoutes routes,
+        INotificationPublisher? publisher = null,
+        DispatchWeaveOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(routes);
+        this.routes = routes;
+        this.options = options ?? (routes as RegistryRoutes)?.Options ?? new DispatchWeaveOptions();
+        this.publisher = this.options.ResolvePublisher(publisher);
+    }
+
     public Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var invoke = RequestCache<TResponse>.Routes.GetOrAdd(request.GetType(), static type =>
+        var route = RequestCache<TResponse>.Routes.GetOrAdd(request.GetType(), static type =>
             (RequestRoute<TResponse>)Activator.CreateInstance(typeof(RequestRoute<,>).MakeGenericType(type, typeof(TResponse)))!);
-        return invoke.Send(routes, request, cancellationToken);
+        return route.Send(routes, options, request, cancellationToken);
+    }
+
+    public IAsyncEnumerable<TResponse> CreateStream<TResponse>(IStreamRequest<TResponse> request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var route = StreamCache<TResponse>.Routes.GetOrAdd(request.GetType(), static type =>
+            (StreamRoute<TResponse>)Activator.CreateInstance(typeof(StreamRoute<,>).MakeGenericType(type, typeof(TResponse)))!);
+        return route.CreateStream(routes, options, request, cancellationToken);
     }
 
     public Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default)
         where TNotification : INotification
     {
         ArgumentNullException.ThrowIfNull(notification);
-        var route = notifications.GetOrAdd(notification.GetType(), static type =>
+        var route = NotificationCache.Routes.GetOrAdd(notification.GetType(), static type =>
             (NotificationRoute)Activator.CreateInstance(typeof(NotificationRoute<>).MakeGenericType(type))!);
-        return route.Publish(routes, publisher ?? SequentialPublisher.Instance, notification, cancellationToken);
+        return route.Publish(routes, publisher, options, notification, cancellationToken);
     }
 
-    private static class RequestCache<T>
+    public Task Publish(object notification, CancellationToken cancellationToken = default)
     {
-        internal static readonly ConcurrentDictionary<Type, RequestRoute<T>> Routes = new();
+        ArgumentNullException.ThrowIfNull(notification);
+        if (notification is not INotification typed)
+            throw HandlerResolutionException.InvalidNotification(notification.GetType());
+
+        return Publish(typed, cancellationToken);
     }
 
-    private abstract class RequestRoute<T>
+    private static class RequestCache<TResponse>
     {
-        public abstract Task<T> Send(IDispatchRoutes routes, IRequest<T> request, CancellationToken token);
+        internal static readonly ConcurrentDictionary<Type, RequestRoute<TResponse>> Routes = new();
     }
 
-    private sealed class RequestRoute<TRequest, T> : RequestRoute<T> where TRequest : IRequest<T>
+    private abstract class RequestRoute<TResponse>
     {
-        public override Task<T> Send(IDispatchRoutes routes, IRequest<T> request, CancellationToken token)
+        public abstract Task<TResponse> Send(
+            IDispatchRoutes routes,
+            DispatchWeaveOptions options,
+            IRequest<TResponse> request,
+            CancellationToken token);
+    }
+
+    private sealed class RequestRoute<TRequest, TResponse> : RequestRoute<TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        public override Task<TResponse> Send(
+            IDispatchRoutes routes,
+            DispatchWeaveOptions options,
+            IRequest<TResponse> request,
+            CancellationToken token)
         {
             var typed = (TRequest)request;
-            var pipeline = routes.Handler<TRequest, T>(typed, token);
-            foreach (var behavior in routes.Behaviors<TRequest, T>().Reverse())
+            var pipeline = routes.Handler<TRequest, TResponse>(typed, token);
+            var reverseRegistrationOrder = options.LastBehaviorOutermost &&
+                routes is not RegistryRoutes { LastBehaviorOutermost: true };
+
+            var behaviors = PipelineOrderResolver.MaterializeOrdered(
+                routes.Behaviors<TRequest, TResponse>(),
+                options.EnablePipelineOrdering,
+                reverseRegistrationOrder);
+
+            for (var i = behaviors.Length - 1; i >= 0; i--)
             {
+                var behavior = behaviors[i];
                 var next = pipeline;
                 pipeline = () => behavior.Handle(typed, next, token);
             }
+
             return pipeline();
         }
     }
 
-    private static readonly ConcurrentDictionary<Type, NotificationRoute> notifications = new();
+    private static class StreamCache<TResponse>
+    {
+        internal static readonly ConcurrentDictionary<Type, StreamRoute<TResponse>> Routes = new();
+    }
+
+    private abstract class StreamRoute<TResponse>
+    {
+        public abstract IAsyncEnumerable<TResponse> CreateStream(
+            IDispatchRoutes routes,
+            DispatchWeaveOptions options,
+            IStreamRequest<TResponse> request,
+            CancellationToken token);
+    }
+
+    private sealed class StreamRoute<TRequest, TResponse> : StreamRoute<TResponse>
+        where TRequest : IStreamRequest<TResponse>
+    {
+        public override IAsyncEnumerable<TResponse> CreateStream(
+            IDispatchRoutes routes,
+            DispatchWeaveOptions options,
+            IStreamRequest<TResponse> request,
+            CancellationToken token)
+        {
+            var typed = (TRequest)request;
+            var pipeline = routes.StreamHandler<TRequest, TResponse>(typed, token);
+            var reverseRegistrationOrder = options.LastBehaviorOutermost &&
+                routes is not RegistryRoutes { LastBehaviorOutermost: true };
+
+            var behaviors = PipelineOrderResolver.MaterializeOrdered(
+                routes.StreamBehaviors<TRequest, TResponse>(),
+                options.EnablePipelineOrdering,
+                reverseRegistrationOrder);
+
+            for (var i = behaviors.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviors[i];
+                var next = pipeline;
+                pipeline = () => behavior.Handle(typed, next, token);
+            }
+
+            return pipeline();
+        }
+    }
+
+    private static class NotificationCache
+    {
+        internal static readonly ConcurrentDictionary<Type, NotificationRoute> Routes = new();
+    }
 
     private abstract class NotificationRoute
     {
-        public abstract Task Publish(IDispatchRoutes routes, INotificationPublisher publisher, INotification notification, CancellationToken token);
+        public abstract Task Publish(
+            IDispatchRoutes routes,
+            INotificationPublisher publisher,
+            DispatchWeaveOptions options,
+            INotification notification,
+            CancellationToken token);
     }
 
-    private sealed class NotificationRoute<T> : NotificationRoute where T : INotification
+    private sealed class NotificationRoute<TConcrete> : NotificationRoute
+        where TConcrete : INotification
     {
-        public override Task Publish(IDispatchRoutes routes, INotificationPublisher publisher, INotification notification, CancellationToken token)
+        private static readonly IPolymorphicSource<TConcrete>[] PolymorphicSources = BuildPolymorphicSources();
+
+        public override Task Publish(
+            IDispatchRoutes routes,
+            INotificationPublisher publisher,
+            DispatchWeaveOptions options,
+            INotification notification,
+            CancellationToken token)
         {
-            return publisher.Publish(routes.Notifications<T>(), (T)notification, token);
+            var typed = (TConcrete)notification;
+
+            if (!options.PolymorphicNotificationDispatch || PolymorphicSources.Length <= 1)
+            {
+                return publisher.Publish(routes.Notifications<TConcrete>(), typed, token);
+            }
+
+            var handlers = ResolvePolymorphicHandlers(routes);
+            return publisher.Publish(handlers, typed, token);
+        }
+
+        private static List<INotificationHandler<TConcrete>> ResolvePolymorphicHandlers(IDispatchRoutes routes)
+        {
+            List<INotificationHandler<TConcrete>> result = [];
+            HashSet<object> seenInstances = new(ReferenceEqualityComparer.Instance);
+            HashSet<Type> seenTypesFromPriorSources = [];
+            List<Type> currentSourceTypes = [];
+
+            for (var i = 0; i < PolymorphicSources.Length; i++)
+            {
+                currentSourceTypes.Clear();
+                foreach (var (handler, rawInstance) in PolymorphicSources[i].Resolve(routes))
+                {
+                    var handlerType = rawInstance.GetType();
+                    if (seenTypesFromPriorSources.Contains(handlerType))
+                        continue;
+
+                    if (seenInstances.Add(rawInstance))
+                    {
+                        result.Add(handler);
+                        currentSourceTypes.Add(handlerType);
+                    }
+                }
+
+                for (var j = 0; j < currentSourceTypes.Count; j++)
+                {
+                    seenTypesFromPriorSources.Add(currentSourceTypes[j]);
+                }
+            }
+
+            return result;
+        }
+
+        private static IPolymorphicSource<TConcrete>[] BuildPolymorphicSources()
+        {
+            var concreteType = typeof(TConcrete);
+            List<Type> contractTypes = [concreteType];
+
+            for (var baseType = concreteType.BaseType;
+                 baseType is not null && typeof(INotification).IsAssignableFrom(baseType);
+                 baseType = baseType.BaseType)
+            {
+                contractTypes.Add(baseType);
+            }
+
+            foreach (var iface in concreteType.GetInterfaces())
+            {
+                if (typeof(INotification).IsAssignableFrom(iface) && !contractTypes.Contains(iface))
+                {
+                    contractTypes.Add(iface);
+                }
+            }
+
+            var sources = new IPolymorphicSource<TConcrete>[contractTypes.Count];
+            for (var i = 0; i < contractTypes.Count; i++)
+            {
+                var sourceType = typeof(PolymorphicSource<,>).MakeGenericType(concreteType, contractTypes[i]);
+                sources[i] = (IPolymorphicSource<TConcrete>)Activator.CreateInstance(sourceType)!;
+            }
+
+            return sources;
         }
     }
 
-    private sealed class SequentialPublisher : INotificationPublisher
+    private interface IPolymorphicSource<TConcrete> where TConcrete : INotification
     {
-        internal static readonly SequentialPublisher Instance = new();
-        public async Task Publish<T>(IEnumerable<INotificationHandler<T>> handlers, T notification, CancellationToken token)
-            where T : INotification
+        IEnumerable<(INotificationHandler<TConcrete> Handler, object RawInstance)> Resolve(IDispatchRoutes routes);
+    }
+
+    private sealed class PolymorphicSource<TConcrete, TContract> : IPolymorphicSource<TConcrete>
+        where TConcrete : TContract, INotification
+        where TContract : INotification
+    {
+        public IEnumerable<(INotificationHandler<TConcrete> Handler, object RawInstance)> Resolve(IDispatchRoutes routes)
         {
-            foreach (var handler in handlers)
-                await handler.Handle(notification, token).ConfigureAwait(false);
+            foreach (var handler in routes.Notifications<TContract>())
+            {
+                if (handler is INotificationHandler<TConcrete> direct)
+                {
+                    yield return (direct, handler);
+                }
+                else
+                {
+                    yield return (new StructNotificationHandlerAdapter<TConcrete, TContract>(handler), handler);
+                }
+            }
         }
+    }
+
+    private sealed class StructNotificationHandlerAdapter<TConcrete, TContract>(INotificationHandler<TContract> inner)
+        : INotificationHandler<TConcrete>
+        where TConcrete : TContract, INotification
+        where TContract : INotification
+    {
+        public Task Handle(TConcrete notification, CancellationToken cancellationToken = default) =>
+            inner.Handle(notification, cancellationToken);
     }
 }

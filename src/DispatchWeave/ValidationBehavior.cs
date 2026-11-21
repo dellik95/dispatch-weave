@@ -8,7 +8,10 @@ public sealed class ValidationBehavior<TRequest, TResponse>(IEnumerable<IValidat
     where TRequest : IRequest<TResponse>
     where TResponse : ResultBase<TResponse>, new()
 {
-    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken = default)
     {
         var failures = await RequestValidation.Validate(request, validators, cancellationToken).ConfigureAwait(false);
         if (failures.Count == 0)
@@ -16,9 +19,13 @@ public sealed class ValidationBehavior<TRequest, TResponse>(IEnumerable<IValidat
 
         var response = new TResponse();
         foreach (var failure in failures)
+        {
             response.WithError(new Error(failure.ErrorMessage)
                 .WithMetadata("PropertyName", failure.PropertyName)
-                .WithMetadata("ErrorCode", failure.ErrorCode));
+                .WithMetadata("ErrorCode", failure.ErrorCode)
+                .WithMetadata("Severity", failure.Severity.ToString()));
+        }
+
         return response;
     }
 }
