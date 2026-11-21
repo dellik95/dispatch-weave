@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DispatchWeave.Abstractions/DispatchWeave.Abstractions.csproj" />
+    <Project Path="src/DispatchWeave/DispatchWeave.csproj" />
+    <Project Path="src/DispatchWeave.DependencyInjection/DispatchWeave.DependencyInjection.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DispatchWeave.Tests/DispatchWeave.Tests.csproj" />
+  </Folder>
+</Solution>
