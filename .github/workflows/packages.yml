@@ -13,8 +13,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Verify tag matches the source version
+        run: |
+          version=$(dotnet msbuild src/DispatchWeave/DispatchWeave.csproj -getProperty:Version)
+          test "v$version" = "$GITHUB_REF_NAME"
       - run: dotnet test -c Release
-      - run: dotnet pack -c Release -o artifacts -p:Version="${GITHUB_REF_NAME#v}"
+      - run: dotnet pack -c Release -o artifacts
       - run: dotnet nuget push 'artifacts/*.nupkg' --source https://nuget.pkg.github.com/dellik95/index.json --api-key "$PACKAGE_TOKEN" --skip-duplicate
         env:
           PACKAGE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
