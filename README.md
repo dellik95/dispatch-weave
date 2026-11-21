@@ -26,3 +26,5 @@ Version 1.1.1 introduces the explicit registries and typed handler resolution er
 ### Explicit registration
 
 For standalone dispatch, register a typed handler factory with `DispatchWeave.Registration.HandlerRegistry.Register<TRequest, TResponse>`. Pass the handler, pipeline and notification registries to `RegistryRoutes`, then construct a `Dispatcher` with those routes. Factories run per dispatch. An optional `INotificationPublisher` controls execution and error handling for subscribers.
+
+To include a behavior registered for a base request interface in an explicit registry, override `RegistryRoutes.Behaviors<TRequest, TResponse>` and compose `GetInheritedBehaviors<TRequest, TResponse>()` with the base pipeline. Exact and open registrations keep their existing order. Handler factories execute when the pipeline reaches the handler, so a short-circuiting behavior can complete a request without creating one.

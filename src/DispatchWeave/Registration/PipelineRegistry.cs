@@ -1,6 +1,3 @@
-using System.Collections.Concurrent;
-using System.Collections.Immutable;
-
 namespace DispatchWeave.Registration;
 
 public class PipelineRegistry
@@ -72,6 +69,16 @@ public class PipelineRegistry
             .Cast<IPipelineBehavior<TRequest, TResult>>();
 
         return resolved.Concat(openResolved);
+    }
+
+    // A behavior registered for a base request contract can wrap any compatible concrete request.
+    public IEnumerable<IPipelineBehavior<TRequest, TResult>> GetInheritedBehaviors<TRequest, TResult>()
+        where TRequest : IRequest<TResult>
+    {
+        var requested = typeof(IPipelineBehavior<TRequest, TResult>);
+        return Volatile.Read(ref behaviors)
+            .Where(entry => entry.InterfaceType != requested && requested.IsAssignableFrom(entry.InterfaceType))
+            .Select(entry => (IPipelineBehavior<TRequest, TResult>)entry.Factory());
     }
 
     private static IPipelineBehavior<TRequest, TResult>? InstantiateOpenBehavior<TRequest, TResult>(OpenPipelineRegistration registration)

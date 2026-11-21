@@ -29,6 +29,33 @@ public class DispatchTests
         }
     }
 
+    private sealed class CommonBehavior : IPipelineBehavior<IQuery<string>, Result<string>>
+    {
+        public Task<Result<string>> Handle(IQuery<string> request, RequestHandlerDelegate<Result<string>> next,
+            CancellationToken cancellationToken) => next();
+    }
+
+    [Fact]
+    public async Task Validation_can_short_circuit_an_explicit_route_before_handler_resolution()
+    {
+        var pipelines = new Registration.PipelineRegistry();
+        pipelines.AddBehavior<Echo, Result<string>>(new ValidationBehavior<Echo, Result<string>>([new Validator()]));
+        var dispatcher = new Dispatcher(new Registration.RegistryRoutes(new(), pipelines, new()));
+
+        var result = await dispatcher.Send(new Echo(""));
+        Assert.Equal("Required", Assert.Single(result.Errors).Metadata["ErrorCode"]);
+    }
+
+    [Fact]
+    public void Registry_can_select_behaviors_registered_for_a_base_request_contract()
+    {
+        var pipelines = new Registration.PipelineRegistry();
+        var behavior = new CommonBehavior();
+        pipelines.AddBehavior<IQuery<string>, Result<string>>(behavior);
+        Assert.Same(behavior, Assert.Single(pipelines.GetInheritedBehaviors<Echo, Result<string>>()));
+        Assert.Empty(pipelines.GetInheritedBehaviors<IQuery<string>, Result<string>>());
+    }
+
     [Fact]
     public async Task Registry_resolves_a_fresh_handler_from_the_factory_for_each_call()
     {
